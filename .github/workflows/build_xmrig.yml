@@ -1,0 +1,130 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Build XMRig
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  schedule:
+  - cron: "0 13 * * 1"
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    name: Build ${{ matrix.repo }} on ${{ matrix.platform }} 
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ["linux/amd64", "linux/arm64", "linux/arm/v7"]
+        repo: ["xmrig/xmrig", "C3Pool/xmrig-C3"]
+        
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          repository: ${{ matrix.repo }}
+    
+      - name: Set up QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v1
+        
+      - name: Run container
+        run: |
+          docker run --platform=${{ matrix.platform }} --name=builder -dit -v "$(pwd):/xmrig" alpine
+          
+      - name: Install dependent
+        run: |
+          docker exec builder /bin/sh -c " \
+          apk add git make cmake libstdc++ gcc g++ automake libtool autoconf linux-headers; \
+          "
+    
+      - name: Get information
+        run: |
+          echo "PLATFORM="`echo "${{ matrix.platform }}" | sed 's/\//_/g'` >> $GITHUB_ENV
+          echo "PLATFORM="`echo "${{ matrix.platform }}" | sed 's/\//_/g'`
+          echo "REPO="`echo "${{ matrix.repo }}" | sed 's/\//_/g'` >> $GITHUB_ENV
+          echo "REPO="`echo "${{ matrix.repo }}" | sed 's/\//_/g'`
+          echo "XMRIG_VERSION="`docker exec builder cat /xmrig/src/version.h | grep -Eo "APP_VERSION\s+\"(.+?)\"" | awk -F "\"" '{print $2}'` >> $GITHUB_ENV
+          echo "XMRIG_VERSION="`docker exec builder cat /xmrig/src/version.h | grep -Eo "APP_VERSION\s+\"(.+?)\"" | awk -F "\"" '{print $2}'`          
+          
+      - name: Build other
+        if: ${{ matrix.platform != 'linux/arm64' && matrix.platform != 'linux/arm/v7' }}
+        run: |
+          docker exec builder /bin/sh -c " \
+          chmod -R 777 xmrig; \
+          mkdir xmrig/build; \
+          cd xmrig/scripts && ./build_deps.sh && cd ../build; \
+          cmake .. -DXMRIG_DEPS=scripts/deps -DBUILD_STATIC=ON; \
+          make -j1
+          "
+          
+      - name: Build arm64
+        if: matrix.platform == 'linux/arm64'
+        run: |
+          docker exec builder /bin/sh -c " \
+          chmod -R 777 xmrig; \
+          mkdir xmrig/build; \
+          cd xmrig/scripts && ./build_deps.sh && cd ../build; \
+          cmake .. -DXMRIG_DEPS=scripts/deps -DBUILD_STATIC=ON -DCMAKE_BUILD_TYPE=Release -DARM_TARGET=8 -DWITH_OPENCL=OFF -DWITH_CUDA=OFF -DWITH_HWLOC=OFF; \
+          make -j1
+          "
+    
+      - name: Build armv7
+        if: matrix.platform == 'linux/arm/v7'
+        run: |
+          docker exec builder /bin/sh -c " \
+          chmod -R 777 xmrig; \
+          mkdir xmrig/build; \
+          cd xmrig/scripts && ./build_deps.sh && cd ../build; \
+          cmake .. -DXMRIG_DEPS=scripts/deps -DBUILD_STATIC=ON -DCMAKE_BUILD_TYPE=Release -DARM_TARGET=7 -DWITH_OPENCL=OFF -DWITH_CUDA=OFF -DWITH_HWLOC=OFF; \
+          make -j1
+          "
+          
+      - name: Copy to host
+        run: |
+          docker cp builder:/xmrig/build/xmrig xmrig
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.REPO }}_${{ env.XMRIG_VERSION }}_${{ env.PLATFORM }}
+          path: xmrig
+#       - name: Checkout repo
+#         uses: actions/checkout@v2
+#         with:
+#           repository: ${{ matrix.repo }}
+          
+#       - name: Echo XMRig version
+#         run: |
+#           echo "XMRIG_VERSION="`cat src/version.h | grep -Eo "APP_VERSION\s+\"(.+?)\"" | awk -F "\"" '{print $2}'`
+#           echo "XMRIG_VERSION="`cat src/version.h | grep -Eo "APP_VERSION\s+\"(.+?)\"" | awk -F "\"" '{print $2}'` >> $GITHUB_ENV
+
+#       - name: Setup environment
+#         run: |
+#           sudo apt update
+#           sudo apt install build-essential cmake automake libtool autoconf
+          
+#       - name: Full static compile x86
+#         if: matrix.arm_target == '0'
+#         run: |
+#           sudo su
+#           mkdir build && cd scripts
+#           ./build_deps.sh && cd ../build
+#           cmake .. -DCMAKE_BUILD_TYPE=Release -DXMRIG_DEPS=scripts/deps
+#           make -j$(nproc)
+          
+#       - name: Full static compile arm
+#         if: matrix.arm_target != '0'
+#         run: |
+#           sudo su
+#           mkdir build && cd scripts
+#           ./build_deps.sh && cd ../build
+#           cmake .. -DCMAKE_BUILD_TYPE=Release -DARM_TARGET=${{ matrix.arm_target }} -DWITH_OPENCL=OFF -DWITH_CUDA=OFF -DWITH_HWLOC=OFF -DWITH_ASM=OFF -DXMRIG_DEPS=scripts/deps
+#           make -j$(nproc)
+          
